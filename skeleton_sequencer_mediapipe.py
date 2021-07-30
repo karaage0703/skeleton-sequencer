@@ -8,11 +8,30 @@ import numpy as np
 import mediapipe as mp
 import time
 
+import pygame
+import pygame.midi
+
+pygame.init()
+pygame.midi.init()
+
 # time param
 start_time = 0.0
 dot_line = 0
 
-HUMAN_COLOR = (0, 255, 0)
+# music setting
+volume = 127
+note_list = []
+
+HUMAN_COLOR = (255, 0, 0)
+
+# midi setup
+for i in range(pygame.midi.get_count()):
+    interf, name, input_dev, output_dev, opened = pygame.midi.get_device_info(i)
+    if output_dev and b'NSX-39 ' in name:
+        print('midi id=' + str(i))
+        midi_output = pygame.midi.Output(i)
+
+midi_output.set_instrument(1, 2)
 
 
 def get_args():
@@ -21,6 +40,7 @@ def get_args():
     parser.add_argument("--device", type=int, default=1)
     parser.add_argument("--width", help='cap width', type=int, default=960)
     parser.add_argument("--height", help='cap height', type=int, default=540)
+    parser.add_argument('--fullscreen', type=bool, default=False)
 
     # parser.add_argument('--upper_body_only', action='store_true')  # 0.8.3 or less
     parser.add_argument("--model_complexity",
@@ -41,9 +61,38 @@ def get_args():
     return args
 
 
+def get_pentatonic_scale(note):
+    # C
+    if note % 5 == 0:
+        out_note = note // 5 * 12
+
+    # D#
+    if note % 5 == 1:
+        out_note = note // 5 * 12 + 3
+
+    # F
+    if note % 5 == 2:
+        out_note = note // 5 * 12 + 5
+
+    # G
+    if note % 5 == 3:
+        out_note = note // 5 * 12 + 7
+
+    # A#
+    if note % 5 == 4:
+        out_note = note // 5 * 12 + 10
+
+    out_note += 60
+    while out_note > 127:
+        out_note -= 128
+
+    return out_note
+
+
 def skeleton_sequencer(src):
     global start_time
     global dot_line
+    global note_list
 
     # parameters
     speed = 0.5
@@ -70,12 +119,25 @@ def skeleton_sequencer(src):
         if dot_line > w_max - 1:
             dot_line = 0
 
+        # sound off
+        for note in note_list:
+            midi_output.note_off(note, volume, 2)
+
+        # sound on
+        note_list = []
+
+        for y in range(0, h_max):
+            if dot_color[dot_line][y].tolist() == list(HUMAN_COLOR):
+                note_list.append(get_pentatonic_scale(y))
+
+        for note in note_list:
+            midi_output.note_on(note, volume, 2)
+
     # draw dot
     for y in range(0, h_max):
         for x in range(0, w_max):
             center = (int(x * d_circle + d_circle * 0.5), int(y * d_circle + d_circle * 0.5))
             if x == dot_line:
-                print(dot_color[dot_line][y])
                 if dot_color[dot_line][y].tolist() == list(HUMAN_COLOR):
                     cv.circle(npimg_target, center, int(d_circle / 2), [
                         255 - (int)(dot_color[x][y][0]), 255 - (int)(dot_color[x][y][1]), 255 - (int)(dot_color[x][y][2])],
@@ -117,6 +179,11 @@ def main():
         min_tracking_confidence=min_tracking_confidence,
     )
 
+    window_name = 'Skeleton Sequencer'
+    if args.fullscreen:
+        cv.namedWindow(window_name, cv.WINDOW_NORMAL)
+        cv.setWindowProperty(window_name, cv.WND_PROP_FULLSCREEN, cv.WINDOW_FULLSCREEN)
+
     start_time = time.time()
     while True:
         # camera capture
@@ -147,9 +214,13 @@ def main():
         if key == 27:  # ESC
             break
 
-        # cv.imshow('MediaPipe Pose Demo', debug_image)
-        cv.imshow('MediaPipe Pose Demo', image_ss)
+        # cv.imshow(window_name, debug_image)
+        cv.imshow(window_name, image_ss)
 
+    for note in note_list:
+        midi_output.note_off(note, volume, 2)
+
+    midi_output.close()
     cap.release()
     cv.destroyAllWindows()
 
